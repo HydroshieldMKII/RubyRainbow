@@ -3,13 +3,14 @@ require_relative 'generator'
 
 params = {
     hash_algorithm: 'SHA256',
-    salt: 'salty',
-    length: 8,
+    salt: '',
+    length: 2,
     include_uppercase: true,
     include_digits: true,
-    number_of_threads: 4
+    include_special: true,
+    number_of_threads: 10
 }
 
-RTGenerator.new(params).benchmark
+RTGenerator.new(params).compute_table(output_path: 'table.csv')
 
 

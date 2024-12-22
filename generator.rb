@@ -2,7 +2,7 @@ require 'digest'
 
 class RTGenerator
     def initialize(params)
-        required_params = %i[hash_algorithm salt length number_of_threads]
+        required_params = %i[hash_algorithm salt length number_of_threads include_uppercase include_digits include_special]
         missing_params = required_params - params.keys
         raise "Missing required parameters: #{missing_params}" unless missing_params.empty?
 
@@ -26,7 +26,7 @@ class RTGenerator
             puts "\nBenchmark interrupted."
             threads.each(&:exit)
             elapsed_time = Time.now - start_time
-            display_results(elapsed_time, hashes_generated)
+            display_benchmark_results(elapsed_time, hashes_generated)
             exit
         end
 
@@ -52,12 +52,38 @@ class RTGenerator
         timer_thread.join
 
         elapsed_time = Time.now - start_time
-        display_results(elapsed_time, hashes_generated)
+        display_benchmark_results(elapsed_time, hashes_generated)
     end
 
-    # Compute a table of hashes
-    def compute_table(value: nil, )
-        # Based on parameters, generate a table of hashes
+    # Compute a table of hashes and output the results to a file (Text, CSV or JSON)
+    def compute_table(output_path: 'table.txt')
+        supported_extensions = %w[txt csv json]
+        output_type = output_path.split('.').last
+        raise "Unsupported output extension: #{output_type}" unless supported_extensions.include?(output_type)
+
+        start_time = Time.now
+        combinations = generate_combinations(@params[:length])
+
+        mutex = Mutex.new
+        threads = []
+        slice_size = (combinations.size / @params[:number_of_threads].to_f).ceil
+
+        puts "Computing table with #{@params[:number_of_threads]} threads..."
+        @params[:number_of_threads].times do
+            threads << Thread.new do
+                combinations.each do |plain_text|
+                    hash = hash(plain_text)
+                    mutex.synchronize do
+                        @table[hash] = plain_text
+                    end
+                end
+            end
+        end
+
+        threads.each(&:join)
+
+        output_table(output_path, output_type)
+        puts "Table saved to #{output_path}. Time elapsed: #{(Time.now - start_time).round(2)} seconds"
     end
 
     private
@@ -82,11 +108,36 @@ class RTGenerator
         charset = ('a'..'z').to_a
         charset += ('A'..'Z').to_a if @params[:include_uppercase]
         charset += ('0'..'9').to_a if @params[:include_digits]
+        charset += ['!', '@', '#', '$', '%', '^', '&', '*', '(', ')'] if @params[:include_special]
 
         charset.repeated_permutation(length).lazy.map(&:join)
     end
 
-    def display_results(elapsed_time, hashes_generated)
+    def output_table(output_path, type)
+        if type == 'text'
+            File.open(output_path, 'w') do |file|
+                @table.each do |hash, plain_text|
+                    file.puts "#{hash}:#{plain_text}"
+                end
+            end
+        elsif type == 'csv'
+            require 'csv'
+            CSV.open(output_path, 'wb') do |csv|
+                @table.each do |hash, plain_text|
+                    csv << [hash, plain_text]
+                end
+            end
+        elsif type == 'json'
+            require 'json'
+            File.open(output_path, 'w') do |file|
+                file.puts JSON.pretty_generate(@table)
+            end
+        else
+            raise "Unsupported output type: #{type}"
+        end
+    end
+
+    def display_benchmark_results(elapsed_time, hashes_generated)
         puts "=== Benchmark Details ==="
         puts "Hash algorithm: #{@params[:hash_algorithm]}"
         puts "Salt: #{@params[:salt]}"
