@@ -6,7 +6,7 @@ require 'csv'
 class RTGenerator
     def initialize(params)
         # Validate required parameters
-        required_params = %i[hash_algorithm salt length number_of_threads include_uppercase include_digits include_special]
+        required_params = %i[hash_algorithm salt min_length max_length number_of_threads include_uppercase include_digits include_special]
         missing_params = required_params - params.keys
         raise "Missing required parameters: #{missing_params}" unless missing_params.empty?
 
@@ -15,7 +15,7 @@ class RTGenerator
         raise "Invalid hash algorithm" unless allowed_algorithms.include?(params[:hash_algorithm])
 
         # Validate parameters
-        raise "Invalid length" unless params[:length].is_a?(Integer) && params[:length] > 0
+        raise "Invalid length" unless params[:min_length].is_a?(Integer) && params[:max_length].is_a?(Integer) && params[:min_length] > 0 && params[:max_length] > 0 && params[:min_length] <= params[:max_length]
         raise "Invalid number of threads" unless params[:number_of_threads].is_a?(Integer) && params[:number_of_threads] > 0
         raise "Invalid include_uppercase" unless [true, false].include?(params[:include_uppercase])
         raise "Invalid include_digits" unless [true, false].include?(params[:include_digits])
@@ -73,37 +73,56 @@ class RTGenerator
     end
 
     # Compute a table of hashes and output the results to a file (Text, CSV or JSON)
-    def compute_table(output_path: 'table.txt')
-        raise "Invalid output path" if output_path.empty? || output_path.nil?
+    def compute_table(output_path: nil, overwrite_file: false, hash_to_find: nil)
+        raise "Already computing" if @is_computing
+        raise "Output path cannot be empty" if output_path && output_path.empty?
+        raise "Output file already exists and not overwriting. Use overwrite_file: true" if output_path && File.exist?(output_path) && !overwrite_file
 
-        supported_extensions = %w[txt csv json]
-        output_type = output_path.split('.').last
-        raise "Unsupported output extension: #{output_type}" unless supported_extensions.include?(output_type)
+        if output_path
+            @table = {}
+            supported_extensions = %w[txt csv json]
+            output_type = output_path.split('.').last
+            raise "Unsupported output extension: #{output_type}" unless supported_extensions.include?(output_type)
+        end
 
-        @table = {}
         @is_computing = true
 
         start_time = Time.now
-        combinations = generate_combinations(@params[:length])
+        combinations = generate_combinations()
 
         threads = []
         mutex = Mutex.new
         slice_size = (combinations.size / @params[:number_of_threads].to_f).ceil
+        workloads = combinations.each_slice(slice_size).to_a
 
         puts "== Starting computation with current parameters =="
         puts "Hash algorithm: #{@params[:hash_algorithm]}"
         puts "Salt: #{@params[:salt]}"
-        puts "Length: #{@params[:length]}"
-        puts "Number of threads: #{@params[:number_of_threads]}"
+        puts "Minimum Length: #{@params[:min_length]}"
+        puts "Maximum Length: #{@params[:max_length]}"
+        puts "Hashes to find: #{hash_to_find}"
+        puts "Include uppercase: #{@params[:include_uppercase]}"
+        puts "Include digits: #{@params[:include_digits]}"
+        puts "Include special: #{@params[:include_special]}"
         puts "Output path: #{output_path}"
+        puts "Overwrite file: #{overwrite_file}"
+        puts "Number of threads: #{@params[:number_of_threads]}"
         puts "Computing... Ctrl+C to cancel"
 
-        @params[:number_of_threads].times do
+        workloads.each do |workload|
             threads << Thread.new do
-                combinations.each do |plain_text|
+                workload.each do |plain_text|
                     hash = hash(@params[:salt] + plain_text)
-                    mutex.synchronize do
-                        @table[hash] = plain_text
+
+                    if hash_to_find && hash == hash_to_find
+                        puts "Found hash: #{hash} => #{plain_text}"
+                        threads.each(&:exit)
+                    end
+                
+                    if output_path
+                        mutex.synchronize do
+                            @table[hash] = plain_text
+                        end
                     end
                 end
             end
@@ -116,9 +135,12 @@ class RTGenerator
         end
 
         threads.each(&:join)
+        puts "Computation done! Time elapsed: #{(Time.now - start_time).round(2)} seconds"
 
-        output_table(output_path)
-        puts "Compute done! Table saved to #{output_path}. Time elapsed: #{(Time.now - start_time).round(2)} seconds"
+        if output_path
+            puts "Outputting table to file..."
+            output_table(output_path)
+        end
 
         @is_computing = false
     end
@@ -144,14 +166,16 @@ class RTGenerator
         end
     end
 
-    def generate_combinations(length)
+    def generate_combinations()
         puts "Generating combinations..."
         charset = ('a'..'z').to_a
         charset += ('A'..'Z').to_a if @params[:include_uppercase]
         charset += ('0'..'9').to_a if @params[:include_digits]
         charset += ['!', '@', '#', '$', '%', '^', '&', '*', '(', ')'] if @params[:include_special]
 
-        charset.repeated_permutation(length).lazy.map(&:join)
+        (@params[:min_length]..@params[:max_length]).flat_map do |length|
+            charset.repeated_permutation(length).lazy.map(&:join).force
+        end
     end
 
     def output_table(output_path)
