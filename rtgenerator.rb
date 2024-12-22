@@ -1,13 +1,30 @@
+require 'thread'
 require 'digest'
+require 'json'
+require 'csv'
 
 class RTGenerator
     def initialize(params)
+        # Validate required parameters
         required_params = %i[hash_algorithm salt length number_of_threads include_uppercase include_digits include_special]
         missing_params = required_params - params.keys
         raise "Missing required parameters: #{missing_params}" unless missing_params.empty?
 
-        @params = params
-        @table = {}
+        # Validate hash algorithm
+        allowed_algorithms = %w[MD5 SHA1 SHA256 SHA384 SHA512 RMD160]
+        raise "Invalid hash algorithm" unless allowed_algorithms.include?(params[:hash_algorithm])
+
+        # Validate parameters
+        raise "Invalid length" unless params[:length].is_a?(Integer) && params[:length] > 0
+        raise "Invalid number of threads" unless params[:number_of_threads].is_a?(Integer) && params[:number_of_threads] > 0
+        raise "Invalid include_uppercase" unless [true, false].include?(params[:include_uppercase])
+        raise "Invalid include_digits" unless [true, false].include?(params[:include_digits])
+        raise "Invalid include_special" unless [true, false].include?(params[:include_special])
+        raise "Invalid salt" unless params[:salt].is_a?(String)
+
+        @is_computing = false
+        @params = params # Set parameters
+        @table = {} # Table to store hashes and plain texts
     end
 
     # Benchmark the generation of hashes with current parameters
@@ -23,7 +40,7 @@ class RTGenerator
 
         # Handle Ctrl+C to display results early
         trap("INT") do
-            puts "\nBenchmark interrupted."
+            puts "\nBenchmark interrupted. Aborting..."
             threads.each(&:exit)
             elapsed_time = Time.now - start_time
             display_benchmark_results(elapsed_time, hashes_generated)
@@ -57,22 +74,34 @@ class RTGenerator
 
     # Compute a table of hashes and output the results to a file (Text, CSV or JSON)
     def compute_table(output_path: 'table.txt')
+        raise "Invalid output path" if output_path.empty? || output_path.nil?
+
         supported_extensions = %w[txt csv json]
         output_type = output_path.split('.').last
         raise "Unsupported output extension: #{output_type}" unless supported_extensions.include?(output_type)
 
+        @table = {}
+        @is_computing = true
+
         start_time = Time.now
         combinations = generate_combinations(@params[:length])
 
-        mutex = Mutex.new
         threads = []
+        mutex = Mutex.new
         slice_size = (combinations.size / @params[:number_of_threads].to_f).ceil
 
-        puts "Computing table with #{@params[:number_of_threads]} threads..."
+        puts "== Starting computation with current parameters =="
+        puts "Hash algorithm: #{@params[:hash_algorithm]}"
+        puts "Salt: #{@params[:salt]}"
+        puts "Length: #{@params[:length]}"
+        puts "Number of threads: #{@params[:number_of_threads]}"
+        puts "Output path: #{output_path}"
+        puts "Computing... Ctrl+C to cancel"
+
         @params[:number_of_threads].times do
             threads << Thread.new do
                 combinations.each do |plain_text|
-                    hash = hash(plain_text)
+                    hash = hash(@params[:salt] + plain_text)
                     mutex.synchronize do
                         @table[hash] = plain_text
                     end
@@ -80,24 +109,36 @@ class RTGenerator
             end
         end
 
+        trap("INT") do
+            puts "\nComputation interrupted. Aborting..."
+            threads.each(&:exit)
+            exit
+        end
+
         threads.each(&:join)
 
-        output_table(output_path, output_type)
-        puts "Table saved to #{output_path}. Time elapsed: #{(Time.now - start_time).round(2)} seconds"
+        output_table(output_path)
+        puts "Compute done! Table saved to #{output_path}. Time elapsed: #{(Time.now - start_time).round(2)} seconds"
+
+        @is_computing = false
     end
 
     private
 
-    def hash(plain_text)
+    def hash(pre_digest)
         case @params[:hash_algorithm]
             when 'MD5'
-                Digest::MD5.hexdigest(@params[:salt] + plain_text)
+                Digest::MD5.hexdigest(pre_digest)
             when 'SHA1'
-                Digest::SHA1.hexdigest(@params[:salt] + plain_text)
+                Digest::SHA1.hexdigest(pre_digest)
             when 'SHA256'
-                Digest::SHA256.hexdigest(@params[:salt] + plain_text)
+                Digest::SHA256.hexdigest(pre_digest)
+            when 'SHA384'
+                Digest::SHA384.hexdigest(pre_digest)
             when 'SHA512'
-                Digest::SHA512.hexdigest(@params[:salt] + plain_text)
+                Digest::SHA512.hexdigest(pre_digest)
+            when 'RMD160'
+                Digest::RMD160.hexdigest(pre_digest)
         else
             raise "Unsupported hash algorithm: #{@params[:hash_algorithm]}"
         end
@@ -113,22 +154,22 @@ class RTGenerator
         charset.repeated_permutation(length).lazy.map(&:join)
     end
 
-    def output_table(output_path, type)
-        if type == 'text'
+    def output_table(output_path)
+        extension = output_path.split('.').last
+        
+        if extension == 'txt'
             File.open(output_path, 'w') do |file|
                 @table.each do |hash, plain_text|
                     file.puts "#{hash}:#{plain_text}"
                 end
             end
-        elsif type == 'csv'
-            require 'csv'
+        elsif extension == 'csv'
             CSV.open(output_path, 'wb') do |csv|
                 @table.each do |hash, plain_text|
                     csv << [hash, plain_text]
                 end
             end
-        elsif type == 'json'
-            require 'json'
+        elsif extension == 'json'
             File.open(output_path, 'w') do |file|
                 file.puts JSON.pretty_generate(@table)
             end
