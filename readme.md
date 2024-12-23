@@ -107,10 +107,10 @@ puts "Hash found: #{hash}:#{value}"
 Override default character sets:
 
 ```ruby
-rt_generator.base_charset = 'abcdefghijklmnopqrstuvwxyz'
-rt_generator.uppercase_charset = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ'
-rt_generator.digits_charset = '0123456789'
-rt_generator.special_charset = '!@#$%^&*()_+'
+    rt_generator.base_charset = ('x'..'z').to_a
+    rt_generator.uppercase_charset = ('M'..'P').to_a
+    rt_generator.digits_charset = ('4'..'7').to_a
+    rt_generator.special_charset = ['@', '#', '$']
 ```
 
 ### File Formats
