@@ -94,6 +94,10 @@ Generate a rainbow table and save to a file:
 ```ruby
 rt_generator.compute_table(output_path: 'table.csv', overwrite_file: true)
 ```
+Supported output formats:
+- `.txt`: Plain text with hash and plaintext pairs.
+- `.csv`: CSV file with hash and plaintext columns.
+- `.json`: JSON file with hash-to-plaintext mappings.
 
 Find a specific hash in the generated table:
 
@@ -112,13 +116,6 @@ Override default character sets:
     rt_generator.digits_charset = ('4'..'7').to_a
     rt_generator.special_charset = ['@', '#', '$']
 ```
-
-### File Formats
-
-Supported output formats:
-- `.txt`: Plain text with hash and plaintext pairs.
-- `.csv`: CSV file with hash and plaintext columns.
-- `.json`: JSON file with hash-to-plaintext mappings.
 
 ### Example
 
