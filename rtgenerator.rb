@@ -2,258 +2,158 @@ require 'thread'
 require 'digest'
 require 'json'
 require 'csv'
+require 'parallel'
+require 'ruby-progressbar'
 
 class RTGenerator
+    attr_writer :charset, :uppercase_charset, :digits_charset, :special_charset
     def initialize(params)
-        # Validate required parameters
         required_params = %i[hash_algorithm salt min_length max_length number_of_threads include_uppercase include_digits include_special]
         missing_params = required_params - params.keys
         raise "Missing required parameters: #{missing_params}" unless missing_params.empty?
 
-        # Validate hash algorithm
         allowed_algorithms = %w[MD5 SHA1 SHA256 SHA384 SHA512 RMD160]
         raise "Invalid hash algorithm" unless allowed_algorithms.include?(params[:hash_algorithm])
 
-        # Validate parameters
-        raise "Invalid length" unless params[:min_length].is_a?(Integer) && params[:max_length].is_a?(Integer) && params[:min_length] > 0 && params[:max_length] > 0 && params[:min_length] <= params[:max_length]
+        raise "Invalid length" unless params[:min_length].is_a?(Integer) && params[:max_length].is_a?(Integer) &&
+                                      params[:min_length] > 0 && params[:max_length] > 0 &&
+                                      params[:min_length] <= params[:max_length]
         raise "Invalid number of threads" unless params[:number_of_threads].is_a?(Integer) && params[:number_of_threads] > 0
-        raise "Invalid include_uppercase" unless [true, false].include?(params[:include_uppercase])
-        raise "Invalid include_digits" unless [true, false].include?(params[:include_digits])
-        raise "Invalid include_special" unless [true, false].include?(params[:include_special])
+
+        %i[include_uppercase include_digits include_special].each do |key|
+            raise "Invalid #{key}" unless [true, false].include?(params[key])
+        end
+
         raise "Invalid salt" unless params[:salt].is_a?(String)
 
-        @is_computing = false
-        @params = params # Set parameters
-        @table = {} # Table to store hashes and plain texts
+        @params = params
+        @table = {}
+        @base_charset = ('a'..'z').to_a
+        @uppercase_charset = ('A'..'Z').to_a
+        @digits_charset = ('0'..'9').to_a
+        @special_charset = ['!', '@', '#', '$', '%', '^', '&', '*', '(', ')']
     end
 
-    # Benchmark the generation of hashes with current parameters
     def benchmark(benchmark_time: 10)
-        raise "Already computing" if @is_computing
         raise "Invalid benchmark time" unless benchmark_time.is_a?(Integer) && benchmark_time > 0
-        #Warnings
-        puts "Warning: Benchmark time is too short. Minimum recommended time is 10 seconds." if benchmark_time < 10
-
-        # Generate combinations lazily
-        combinations = generate_combinations()
-        puts "Benchmarking (#{benchmark_time} seconds). Ctrl+C to cancel..."
-        puts "Warning: Combination size is over 1 000 000. This may take a while." if combinations.size > 1000000
-
-        hashes_generated = 0
-        threads = []
+    
+        combinations = generate_combinations
+        total_combinations = combinations.size
         start_time = Time.now
-        mutex = Mutex.new
-
-        # Add warning if benchmark time is too short or 
-
-        # Handle Ctrl+C to display results early
-        trap("INT") do
-            puts "\nBenchmark interrupted. Aborting..."
-            threads.each(&:exit)
-            elapsed_time = Time.now - start_time
-            display_benchmark_results(elapsed_time, hashes_generated, combinations.size)
-            exit
-        end
-
-        # Divide work among threads
-        @params[:number_of_threads].times do
-            threads << Thread.new do
-                combinations.each do |plain_text|
-                    hash(plain_text) # Execute hash function
-                    mutex.synchronize do
-                        hashes_generated += 1
-                    end
-                end
+        hashes_generated = 0
+    
+        # Progress bar
+        progress_bar = ProgressBar.create(
+            title: "Benchmarking",
+            total: total_combinations,
+            format: "%t |%B| %p%% %e",
+            throttle_rate: 0.1
+        )
+    
+        begin
+            Parallel.each(combinations, in_threads: @params[:number_of_threads]) do |plain_text|
+                # Check if the time limit has been reached
+                raise Parallel::Break if Time.now - start_time >= benchmark_time
+    
+                hash(plain_text) # Perform hashing
+                hashes_generated += 1
+    
+                # Update the progress bar
+                progress_bar.increment
             end
+        rescue Parallel::Break
+            puts "\nBenchmark interrupted: Time limit reached"
+        ensure
+            elapsed_time = Time.now - start_time
+            progress_bar.finish
+            display_benchmark_results(elapsed_time, hashes_generated, total_combinations)
         end
-
-        timer_thread = Thread.new do
-            sleep benchmark_time
-            puts "Stopping benchmark..."
-            threads.each(&:exit)
-        end
-
-        threads.each(&:join)
-
-        # Benchmark done before benchmark_time
-        if timer_thread.alive?
-            puts "Benchmark done early."
-            timer_thread.exit
-        end
-
-        elapsed_time = Time.now - start_time
-        display_benchmark_results(elapsed_time, hashes_generated, combinations.size)
     end
 
-    # Compute a table of hashes and output the results to a file (Text, CSV or JSON)
     def compute_table(output_path: nil, overwrite_file: false, hash_to_find: nil)
-        raise "Already computing" if @is_computing
-        raise "Output path cannot be empty" if output_path && output_path.empty?
-        raise "Output file already exists and not overwriting. Use overwrite_file: true" if output_path && File.exist?(output_path) && !overwrite_file
+        raise "Output file already exists. Use overwrite_file: true" if output_path && File.exist?(output_path) && !overwrite_file
 
-        if output_path
-            @table = {}
-            supported_extensions = %w[txt csv json]
-            output_type = output_path.split('.').last
-            raise "Unsupported output extension: #{output_type}" unless supported_extensions.include?(output_type)
-        end
+        combinations = generate_combinations
+        total_combinations = combinations.size
 
-        @is_computing = true
+        # Progress bar
+        progress_bar = ProgressBar.create(
+            title: "Computing Table",
+            total: total_combinations,
+            format: "%t |%B| %p%% %e",
+            throttle_rate: 0.1
+        )
 
-        start_time = Time.now
-        combinations = generate_combinations()
-
-        threads = []
-        mutex = Mutex.new
-        slice_size = (combinations.size / @params[:number_of_threads].to_f).ceil
-        workloads = combinations.each_slice(slice_size).to_a
-
-        puts "== Starting computation with current parameters =="
-        puts "Hash algorithm: #{@params[:hash_algorithm]}"
-        puts "Salt: #{@params[:salt]}"
-        puts "Minimum Length: #{@params[:min_length]}"
-        puts "Maximum Length: #{@params[:max_length]}"
-        puts "Hashes to find: #{hash_to_find}"
-        puts "Include uppercase: #{@params[:include_uppercase]}"
-        puts "Include digits: #{@params[:include_digits]}"
-        puts "Include special: #{@params[:include_special]}"
-        puts "Output path: #{output_path}"
-        puts "Overwrite file: #{overwrite_file}"
-        puts "Number of threads: #{@params[:number_of_threads]}"
-        puts "Computing... Ctrl+C to cancel"
-
-        workloads.each do |workload|
-            threads << Thread.new do
-                workload.each do |plain_text|
-                    hash = hash(@params[:salt] + plain_text)
-
-                    if hash_to_find && hash == hash_to_find
-                        puts "Found hash: #{hash} => #{plain_text}"
-                        threads.each(&:exit)
-                    end
-                
-                    if output_path
-                        mutex.synchronize do
-                            @table[hash] = plain_text
-                        end
-                    end
-                end
+        Parallel.each(combinations, in_threads: @params[:number_of_threads]) do |plain_text|
+            hashed_value = hash(plain_text)
+            if hash_to_find && hashed_value == hash_to_find
+                puts "Found hash: #{hashed_value} => #{plain_text}"
+                exit
             end
+            @table[hashed_value] = plain_text if output_path
+
+            # Update the progress bar
+            progress_bar.increment
         end
 
-        trap("INT") do
-            puts "\nComputation interrupted. Aborting..."
-            threads.each(&:exit)
-            exit
-        end
-
-        threads.each(&:join)
-        puts "Computation done! Time elapsed: #{format_time(Time.now - start_time)}"
-
-        if output_path
-            puts "Outputting table to file..."
-            output_table(output_path)
-        end
-
-        @is_computing = false
+        progress_bar.finish
+        output_table(output_path) if output_path
+        puts "Computation complete!"
     end
 
     private
 
-    def hash(pre_digest)
-        case @params[:hash_algorithm]
-            when 'MD5'
-                Digest::MD5.hexdigest(pre_digest)
-            when 'SHA1'
-                Digest::SHA1.hexdigest(pre_digest)
-            when 'SHA256'
-                Digest::SHA256.hexdigest(pre_digest)
-            when 'SHA384'
-                Digest::SHA384.hexdigest(pre_digest)
-            when 'SHA512'
-                Digest::SHA512.hexdigest(pre_digest)
-            when 'RMD160'
-                Digest::RMD160.hexdigest(pre_digest)
-        else
-            raise "Unsupported hash algorithm: #{@params[:hash_algorithm]}"
-        end
-    end
-
-    def generate_combinations()
-        puts "Generating combinations..."
-        charset = ('a'..'z').to_a
-        charset += ('A'..'Z').to_a if @params[:include_uppercase]
-        charset += ('0'..'9').to_a if @params[:include_digits]
-        charset += ['!', '@', '#', '$', '%', '^', '&', '*', '(', ')'] if @params[:include_special]
-
-        combinations = []
-        mutex = Mutex.new
-        threads = []
-
-        slice_size = ((@params[:max_length] - @params[:min_length] + 1) / @params[:number_of_threads].to_f).ceil
-        (@params[:min_length]..@params[:max_length]).each_slice(slice_size) do |lengths|
-            threads << Thread.new do
-                lengths.each do |length|
-                    charset.repeated_permutation(length).lazy.each do |combination|
-                        mutex.synchronize do
-                            combinations << combination.join
-                        end
-                    end
+    def generate_combinations
+        charset = @base_charset
+        charset += @uppercase_charset if @params[:include_uppercase]
+        charset += @digits_charset if @params[:include_digits]
+        charset += @special_charset if @params[:include_special]
+    
+        Enumerator.new do |yielder|
+            (@params[:min_length]..@params[:max_length]).each do |length|
+                charset.repeated_permutation(length).each do |combination|
+                    yielder << combination.join
                 end
             end
         end
+    end
+    
+    
 
-        threads.each(&:join)
-        combinations
+    def hash(pre_digest)
+        salted = "#{@params[:salt]}#{pre_digest}"
+        case @params[:hash_algorithm]
+        when 'MD5' then Digest::MD5.hexdigest(salted)
+        when 'SHA1' then Digest::SHA1.hexdigest(salted)
+        when 'SHA256' then Digest::SHA256.hexdigest(salted)
+        when 'SHA384' then Digest::SHA384.hexdigest(salted)
+        when 'SHA512' then Digest::SHA512.hexdigest(salted)
+        when 'RMD160' then Digest::RMD160.hexdigest(salted)
+        else raise "Unsupported hash algorithm: #{@params[:hash_algorithm]}"
+        end
     end
 
     def output_table(output_path)
-        extension = output_path.split('.').last
-        
-        if extension == 'txt'
-            File.open(output_path, 'w') do |file|
-                @table.each do |hash, plain_text|
-                    file.puts "#{hash}:#{plain_text}"
-                end
-            end
-        elsif extension == 'csv'
-            CSV.open(output_path, 'wb') do |csv|
-                @table.each do |hash, plain_text|
-                    csv << [hash, plain_text]
-                end
-            end
-        elsif extension == 'json'
-            File.open(output_path, 'w') do |file|
+        File.open(output_path, 'w') do |file|
+            case output_path.split('.').last
+            when 'txt'
+                @table.each { |hash, plain_text| file.puts "#{hash}:#{plain_text}" }
+            when 'csv'
+                CSV.open(output_path, 'wb') { |csv| @table.each { |hash, plain_text| csv << [hash, plain_text] } }
+            when 'json'
                 file.puts JSON.pretty_generate(@table)
+            else
+                raise "Unsupported output type"
             end
-        else
-            raise "Unsupported output type: #{type}"
         end
     end
 
     def display_benchmark_results(elapsed_time, hashes_generated, combinations_size)
         hashes_per_second = (hashes_generated / elapsed_time).round(2)
-        approximate_time = combinations_size / hashes_per_second
-        approximate_time_str = format_time(approximate_time)
-    
-        puts "=== Benchmark Details ==="
-        puts "Hash algorithm: #{@params[:hash_algorithm]}"
-        puts "Salt: #{@params[:salt]}"
-        puts "Length range: #{@params[:min_length]} to #{@params[:max_length]}"
-        puts "Benchmark time: #{elapsed_time.round(2)} seconds"
-        puts "Hashes generated: #{hashes_generated}"
-        puts "Hashes generated per second: #{hashes_per_second} H/s"
-        puts "Hashes per thread: #{(hashes_per_second / @params[:number_of_threads]).round(2)} H/s per thread"
-        puts "Total combinations: #{combinations_size}"
-        puts "Estimated time to compute all combinations: #{approximate_time_str}"
-        puts "=========================="
-    end
-    
-    # Format time into hours, minutes, and seconds from seconds
-    def format_time(seconds)
-        hrs = (seconds / 3600).floor
-        mins = ((seconds % 3600) / 60).floor
-        secs = (seconds % 60).round
-        "#{hrs}h #{mins}m #{secs}s"
+        puts "Benchmark completed:"
+        puts "- Elapsed Time: #{elapsed_time.round(2)} seconds"
+        puts "- Hashes Generated: #{hashes_generated}"
+        puts "- Hashes per Second: #{hashes_per_second} H/s"
+        puts "- Total Combinations: #{combinations_size}"
     end
 end
