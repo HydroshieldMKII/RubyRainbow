@@ -137,18 +137,3 @@ rt_generator = RTGenerator.new({
 rt_generator.benchmark(benchmark_time: 5)
 rt_generator.compute_table(output_path: 'rainbow_table.json', overwrite_file: true)
 ```
-
-### Dependencies
-
-- Ruby >= 2.5
-- Gems: thread, timeout, digest, json, csv, parallel, ruby-progressbar
-
-Install dependencies with:
-
-```bash
-gem install thread timeout digest json csv parallel ruby-progressbar
-```
-
-### License
-
-This project is licensed under the MIT License. See the LICENSE file for details.
