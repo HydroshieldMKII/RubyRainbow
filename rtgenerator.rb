@@ -29,21 +29,29 @@ class RTGenerator
 
     # Benchmark the generation of hashes with current parameters
     def benchmark(benchmark_time: 10)
+        raise "Already computing" if @is_computing
+        raise "Invalid benchmark time" unless benchmark_time.is_a?(Integer) && benchmark_time > 0
+        #Warnings
+        puts "Warning: Benchmark time is too short. Minimum recommended time is 10 seconds." if benchmark_time < 10
+
+        # Generate combinations lazily
+        combinations = generate_combinations()
+        puts "Benchmarking (#{benchmark_time} seconds). Ctrl+C to cancel..."
+        puts "Warning: Combination size is over 1 000 000. This may take a while." if combinations.size > 1000000
+
         hashes_generated = 0
         threads = []
         start_time = Time.now
         mutex = Mutex.new
 
-        # Generate combinations lazily
-        combinations = generate_combinations(@params[:length])
-        puts "Benchmarking (#{benchmark_time} seconds). Ctrl+C to cancel..."
+        # Add warning if benchmark time is too short or 
 
         # Handle Ctrl+C to display results early
         trap("INT") do
             puts "\nBenchmark interrupted. Aborting..."
             threads.each(&:exit)
             elapsed_time = Time.now - start_time
-            display_benchmark_results(elapsed_time, hashes_generated)
+            display_benchmark_results(elapsed_time, hashes_generated, combinations.size)
             exit
         end
 
@@ -66,10 +74,15 @@ class RTGenerator
         end
 
         threads.each(&:join)
-        timer_thread.join
+
+        # Benchmark done before benchmark_time
+        if timer_thread.alive?
+            puts "Benchmark done early."
+            timer_thread.exit
+        end
 
         elapsed_time = Time.now - start_time
-        display_benchmark_results(elapsed_time, hashes_generated)
+        display_benchmark_results(elapsed_time, hashes_generated, combinations.size)
     end
 
     # Compute a table of hashes and output the results to a file (Text, CSV or JSON)
@@ -135,7 +148,7 @@ class RTGenerator
         end
 
         threads.each(&:join)
-        puts "Computation done! Time elapsed: #{(Time.now - start_time).round(2)} seconds"
+        puts "Computation done! Time elapsed: #{format_time(Time.now - start_time)}"
 
         if output_path
             puts "Outputting table to file..."
@@ -173,9 +186,25 @@ class RTGenerator
         charset += ('0'..'9').to_a if @params[:include_digits]
         charset += ['!', '@', '#', '$', '%', '^', '&', '*', '(', ')'] if @params[:include_special]
 
-        (@params[:min_length]..@params[:max_length]).flat_map do |length|
-            charset.repeated_permutation(length).lazy.map(&:join).force
+        combinations = []
+        mutex = Mutex.new
+        threads = []
+
+        slice_size = ((@params[:max_length] - @params[:min_length] + 1) / @params[:number_of_threads].to_f).ceil
+        (@params[:min_length]..@params[:max_length]).each_slice(slice_size) do |lengths|
+            threads << Thread.new do
+                lengths.each do |length|
+                    charset.repeated_permutation(length).lazy.each do |combination|
+                        mutex.synchronize do
+                            combinations << combination.join
+                        end
+                    end
+                end
+            end
         end
+
+        threads.each(&:join)
+        combinations
     end
 
     def output_table(output_path)
@@ -202,15 +231,29 @@ class RTGenerator
         end
     end
 
-    def display_benchmark_results(elapsed_time, hashes_generated)
+    def display_benchmark_results(elapsed_time, hashes_generated, combinations_size)
+        hashes_per_second = (hashes_generated / elapsed_time).round(2)
+        approximate_time = combinations_size / hashes_per_second
+        approximate_time_str = format_time(approximate_time)
+    
         puts "=== Benchmark Details ==="
         puts "Hash algorithm: #{@params[:hash_algorithm]}"
         puts "Salt: #{@params[:salt]}"
-        puts "Length: #{@params[:length]}"
+        puts "Length range: #{@params[:min_length]} to #{@params[:max_length]}"
         puts "Benchmark time: #{elapsed_time.round(2)} seconds"
         puts "Hashes generated: #{hashes_generated}"
-        puts "Hashes per second: #{(hashes_generated / elapsed_time).round(2)}"
-        puts "Hashes per thread: #{(hashes_generated / elapsed_time / @params[:number_of_threads]).round(2)}"
+        puts "Hashes generated per second: #{hashes_per_second} H/s"
+        puts "Hashes per thread: #{(hashes_per_second / @params[:number_of_threads]).round(2)} H/s per thread"
+        puts "Total combinations: #{combinations_size}"
+        puts "Estimated time to compute all combinations: #{approximate_time_str}"
         puts "=========================="
+    end
+    
+    # Format time into hours, minutes, and seconds from seconds
+    def format_time(seconds)
+        hrs = (seconds / 3600).floor
+        mins = ((seconds % 3600) / 60).floor
+        secs = (seconds % 60).round
+        "#{hrs}h #{mins}m #{secs}s"
     end
 end
