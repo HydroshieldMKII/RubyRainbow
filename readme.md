@@ -21,9 +21,7 @@ RTGenerator is a Ruby-based tool for generating and benchmarking rainbow tables 
   - [Benchmarking](#benchmarking)
   - [Compute Rainbow Table](#compute-rainbow-table)
   - [Advanced Configuration](#advanced-configuration)
-  - [File Formats](#file-formats)
   - [Example](#example)
-  - [Dependencies](#dependencies)
 
 ## Installation
 
