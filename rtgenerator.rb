@@ -136,9 +136,10 @@ class RTGenerator
 
     def generate_combinations
         charset = @base_charset
-        charset += @uppercase_charset if @params[:include_uppercase]
-        charset += @digits_charset if @params[:include_digits]
-        charset += @special_charset if @params[:include_special]
+    
+        charset += @uppercase_charset if @params[:include_uppercase] && !@uppercase_charset.empty?
+        charset += @digits_charset if @params[:include_digits] && !@digits_charset.empty?
+        charset += @special_charset if @params[:include_special] && !@special_charset.empty?
     
         Enumerator.new do |yielder|
             (@params[:min_length]..@params[:max_length]).each do |length|
@@ -148,6 +149,7 @@ class RTGenerator
             end
         end
     end
+    
     
     
 
