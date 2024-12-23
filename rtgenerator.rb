@@ -7,7 +7,7 @@ require 'parallel'
 require 'ruby-progressbar'
 
 class RTGenerator
-    attr_writer :charset, :uppercase_charset, :digits_charset, :special_charset
+    attr_writer :base_charset, :uppercase_charset, :digits_charset, :special_charset
     def initialize(params)
         # Validate parameters
         required_params = %i[hash_algorithm salt min_length max_length number_of_threads include_uppercase include_digits include_special]
@@ -57,17 +57,18 @@ class RTGenerator
         progress_bar = ProgressBar.create(
             title: "Benchmarking",
             total: benchmark_time,
-            format: "%t |%B| %p%% %e",
-            throttle_rate: 0.5
+            format: "\e[0;32m%t |%B| %p%% %e\e[0m",
+            throttle_rate: 0.5,
+            progress_mark: '█',
+            remainder_mark: '░',
+            color: :green
         )
 
-        Thread.new do
-            loop do
+        t = Thread.new do
+            (0..benchmark_time).each do |i|
+                progress_bar.increment unless progress_bar.finished?
                 sleep 1
-                progress_bar.increment
-                break if Time.now - start_time >= benchmark_time
             end
-            progress_bar.finish
         end
 
         begin   
@@ -78,7 +79,10 @@ class RTGenerator
                 end
             end
         rescue Timeout::Error
+            t.kill
         end
+
+        t.join
 
         progress_bar.finish
         elapsed_time = Time.now - start_time
@@ -90,31 +94,42 @@ class RTGenerator
         raise "Output file already exists. Use overwrite_file: true" if output_path && File.exist?(output_path) && !overwrite_file
 
         combinations = generate_combinations
-        total_combinations = combinations.size
+        total_combinations = combinations.to_a.size
+        mutex = Mutex.new
 
         # Progress bar
         progress_bar = ProgressBar.create(
             title: "Computing Table",
             total: total_combinations,
-            format: "%t |%B| %p%% %e",
-            throttle_rate: 0.1
+            format: "\e[0;34m%t |%B| %p%% %e\e[0m",
+            throttle_rate: 0.5,
+            progress_mark: '█',
+            remainder_mark: '░',
+            color: :blue
         )
 
-        Parallel.each(combinations, in_threads: @params[:number_of_threads]) do |plain_text|
-            hashed_value = hash(plain_text)
-            if hash_to_find && hashed_value == hash_to_find
-                puts "Found hash: #{hashed_value} => #{plain_text}"
-                exit
-            end
-            @table[hashed_value] = plain_text if output_path
+        result = nil
 
-            # Update the progress bar
-            progress_bar.increment
+        Parallel.each(combinations, in_threads: @params[:number_of_threads]) do |plain_text|
+            raise Parallel::Break if result
+            hashed_value = hash(plain_text)
+            result = [hashed_value, plain_text] if hash_to_find && hashed_value == hash_to_find
+
+            mutex.synchronize do
+                @table[hashed_value] = plain_text if output_path
+
+                # Update the progress bar
+                progress_bar.increment
+            end
         end
 
         progress_bar.finish
-        output_table(output_path) if output_path
-        puts "Computation complete!"
+
+        if hash_to_find
+            return result
+        elsif output_path
+            output_table(output_path)
+        end
     end
 
     private
