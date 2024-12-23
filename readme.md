@@ -136,4 +136,5 @@ rt_generator = RTGenerator.new({
 
 rt_generator.benchmark(benchmark_time: 5)
 rt_generator.compute_table(output_path: 'rainbow_table.json', overwrite_file: true)
+rt_generator.compute_table(hash_to_find: 'your_hash_here') #=> 'your_hash_here':'plaintext'
 ```
