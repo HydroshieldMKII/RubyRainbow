@@ -1,4 +1,5 @@
 require 'thread'
+require 'timeout'
 require 'digest'
 require 'json'
 require 'csv'
@@ -8,26 +9,33 @@ require 'ruby-progressbar'
 class RTGenerator
     attr_writer :charset, :uppercase_charset, :digits_charset, :special_charset
     def initialize(params)
+        # Validate parameters
         required_params = %i[hash_algorithm salt min_length max_length number_of_threads include_uppercase include_digits include_special]
         missing_params = required_params - params.keys
         raise "Missing required parameters: #{missing_params}" unless missing_params.empty?
 
+        # Validate algorithm
         allowed_algorithms = %w[MD5 SHA1 SHA256 SHA384 SHA512 RMD160]
         raise "Invalid hash algorithm" unless allowed_algorithms.include?(params[:hash_algorithm])
 
+        # Validate length
         raise "Invalid length" unless params[:min_length].is_a?(Integer) && params[:max_length].is_a?(Integer) &&
                                       params[:min_length] > 0 && params[:max_length] > 0 &&
                                       params[:min_length] <= params[:max_length]
         raise "Invalid number of threads" unless params[:number_of_threads].is_a?(Integer) && params[:number_of_threads] > 0
 
+        # Validate boolean parameters
         %i[include_uppercase include_digits include_special].each do |key|
             raise "Invalid #{key}" unless [true, false].include?(params[key])
         end
 
+        # Validate salt
         raise "Invalid salt" unless params[:salt].is_a?(String)
 
-        @params = params
         @table = {}
+        @params = params
+
+        # Default charsets, can be overridden
         @base_charset = ('a'..'z').to_a
         @uppercase_charset = ('A'..'Z').to_a
         @digits_charset = ('0'..'9').to_a
@@ -36,39 +44,47 @@ class RTGenerator
 
     def benchmark(benchmark_time: 10)
         raise "Invalid benchmark time" unless benchmark_time.is_a?(Integer) && benchmark_time > 0
-    
-        combinations = generate_combinations
-        total_combinations = combinations.size
-        start_time = Time.now
+        charset = @base_charset
+        charset += @uppercase_charset if @params[:include_uppercase]
+        charset += @digits_charset if @params[:include_digits]
+        charset += @special_charset if @params[:include_special]
+
+        total_combinations = charset.repeated_permutation(@params[:max_length]).size
         hashes_generated = 0
-    
+        start_time = Time.now
+
         # Progress bar
         progress_bar = ProgressBar.create(
             title: "Benchmarking",
-            total: total_combinations,
+            total: benchmark_time,
             format: "%t |%B| %p%% %e",
-            throttle_rate: 0.1
+            throttle_rate: 0.5
         )
-    
-        begin
-            Parallel.each(combinations, in_threads: @params[:number_of_threads]) do |plain_text|
-                # Check if the time limit has been reached
-                raise Parallel::Break if Time.now - start_time >= benchmark_time
-    
-                hash(plain_text) # Perform hashing
-                hashes_generated += 1
-    
-                # Update the progress bar
+
+        Thread.new do
+            loop do
+                sleep 1
                 progress_bar.increment
+                break if Time.now - start_time >= benchmark_time
             end
-        rescue Parallel::Break
-            puts "\nBenchmark interrupted: Time limit reached"
-        ensure
-            elapsed_time = Time.now - start_time
             progress_bar.finish
-            display_benchmark_results(elapsed_time, hashes_generated, total_combinations)
         end
+
+        begin   
+            Timeout.timeout(benchmark_time) do
+                charset.repeated_permutation(@params[:max_length]).each do |combination|
+                    hash(combination.join)
+                    hashes_generated += 1
+                end
+            end
+        rescue Timeout::Error
+        end
+
+        progress_bar.finish
+        elapsed_time = Time.now - start_time
+        display_benchmark_results(elapsed_time, hashes_generated, total_combinations)
     end
+    
 
     def compute_table(output_path: nil, overwrite_file: false, hash_to_find: nil)
         raise "Output file already exists. Use overwrite_file: true" if output_path && File.exist?(output_path) && !overwrite_file
@@ -152,8 +168,10 @@ class RTGenerator
         hashes_per_second = (hashes_generated / elapsed_time).round(2)
         puts "Benchmark completed:"
         puts "- Elapsed Time: #{elapsed_time.round(2)} seconds"
-        puts "- Hashes Generated: #{hashes_generated}"
-        puts "- Hashes per Second: #{hashes_per_second} H/s"
-        puts "- Total Combinations: #{combinations_size}"
+        puts "- Total hashes computed: #{hashes_generated} H"
+        puts "- Total hashes computed per Thread: #{(hashes_generated / @params[:number_of_threads].to_f).round(2)} H"
+        puts "- Hashes computed per Second: #{hashes_per_second} H/s"
+        puts "- Hashes computed per Minute: #{(hashes_per_second * 60).round(2)} H/m"
+        puts "- Total Generated Combinations: #{combinations_size} H"
     end
 end

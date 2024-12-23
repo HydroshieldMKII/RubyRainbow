@@ -4,7 +4,7 @@ params = {
     hash_algorithm: 'SHA256',
     salt: '',
     min_length: 1,
-    max_length: 3,
+    max_length: 4,
     include_uppercase: true,
     include_digits: true,
     include_special: false,
@@ -19,8 +19,8 @@ rt_generator = RTGenerator.new(params)
 # rt_generator.digits_charset = '0123456789'
 # rt_generator.special_charset = '!@#$%^&*()_+'
 
-# # Benchmark the generation of hashes with current parameters
-# rt_generator.benchmark(benchmark_time: 10)
+# Benchmark the generation of hashes with current parameters
+rt_generator.benchmark(benchmark_time: 10)
 
 # Compute all the hashes and output the results to a file (Text, CSV or JSON)
 rt_generator.compute_table(output_path: 'table.csv', overwrite_file: true)
