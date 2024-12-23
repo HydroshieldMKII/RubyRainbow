@@ -97,7 +97,7 @@ Supported output formats:
 - `.csv`: CSV file with hash and plaintext columns.
 - `.json`: JSON file with hash-to-plaintext mappings.
 
-Find a specific hash in the generated table:
+Compute and find a specific hash in the generated table:
 
 ```ruby
 hash, value = rt_generator.compute_table(hash_to_find: 'your_hash_here')
