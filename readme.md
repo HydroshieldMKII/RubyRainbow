@@ -1,6 +1,6 @@
-# RTGenerator
+# RubyRainbow
 
-RTGenerator is a Ruby-based tool for generating and benchmarking rainbow tables for hash algorithms. It supports customizable character sets, CPU multithreading, and output formats like JSON, CSV, and text files.
+RubyRainbow is a Ruby-based tool for generating and benchmarking rainbow tables for hash algorithms. It supports customizable character sets, CPU multithreading, and output formats like JSON, CSV, and text files.
 
 ## Features
 
@@ -40,10 +40,10 @@ RTGenerator is a Ruby-based tool for generating and benchmarking rainbow tables 
 
 ### Initial Setup
 
-Create a new instance of the RTGenerator class by providing required parameters:
+Create a new instance of the RubyRainbow class by providing required parameters:
 
 ```ruby
-require_relative 'rtgenerator'
+require_relative 'rrainbow.rb'
 
 params = {
     hash_algorithm: 'SHA256',
@@ -56,7 +56,7 @@ params = {
     number_of_threads: 6
 }
 
-rt_generator = RTGenerator.new(params)
+rr = RubyRainbow.new(params)
 ```
 
 ### Parameters
@@ -77,7 +77,7 @@ rt_generator = RTGenerator.new(params)
 Measure hash generation performance with the benchmark method:
 
 ```ruby
-rt_generator.benchmark(benchmark_time: 10)
+rr.benchmark(benchmark_time: 10)
 ```
 
 **Output:**
@@ -90,7 +90,7 @@ rt_generator.benchmark(benchmark_time: 10)
 Generate a rainbow table and save to a file:
 
 ```ruby
-rt_generator.compute_table(output_path: 'table.csv', overwrite_file: true)
+rr.compute_table(output_path: 'table.csv', overwrite_file: true)
 ```
 Supported output formats:
 - `.txt`: Plain text with hash and plaintext pairs.
@@ -100,7 +100,7 @@ Supported output formats:
 Compute and find a specific hash in the generated table:
 
 ```ruby
-hash, value = rt_generator.compute_table(hash_to_find: 'your_hash_here')
+hash, value = rr.compute_table(hash_to_find: 'your_hash_here')
 puts "Hash found: #{hash}:#{value}"
 ```
 
@@ -109,16 +109,16 @@ puts "Hash found: #{hash}:#{value}"
 Override default character sets:
 
 ```ruby
-    rt_generator.base_charset = ('x'..'z').to_a
-    rt_generator.uppercase_charset = ('M'..'P').to_a
-    rt_generator.digits_charset = ('4'..'7').to_a
-    rt_generator.special_charset = ['@', '#', '$']
+    rr.base_charset = ('x'..'z').to_a
+    rr.uppercase_charset = ('M'..'P').to_a
+    rr.digits_charset = ('4'..'7').to_a
+    rr.special_charset = ['@', '#', '$']
 ```
 
 ### Example
 
 ```ruby
-rt_generator = RTGenerator.new({
+rr = RubyRainbow.new({
     hash_algorithm: 'SHA256',
     salt: 'mysalt',
     min_length: 1,
@@ -130,11 +130,11 @@ rt_generator = RTGenerator.new({
 })
 
 # Perform benchmarking to measure performance
-rt_generator.benchmark(benchmark_time: 5)
+rr.benchmark(benchmark_time: 5)
 
 # Generate a rainbow table and save to a file
-rt_generator.compute_table(output_path: 'rainbow_table.json', overwrite_file: true)
+rr.compute_table(output_path: 'rainbow_table.json', overwrite_file: true)
 
 # Find a specific hash 
-rt_generator.compute_table(hash_to_find: 'your_hash_here') #=> This will return 'hash_here':'plain_text'
+rr.compute_table(hash_to_find: 'your_hash_here') #=> This will return 'hash_here':'plain_text'
 ```
