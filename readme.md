@@ -1,6 +1,6 @@
 # RTGenerator
 
-RTGenerator is a Ruby-based tool for generating and benchmarking rainbow tables for hash algorithms. It supports customizable character sets, multithreading, and output formats like JSON, CSV, and text files.
+RTGenerator is a Ruby-based tool for generating and benchmarking rainbow tables for hash algorithms. It supports customizable character sets, CPU multithreading, and output formats like JSON, CSV, and text files.
 
 ## Features
 
