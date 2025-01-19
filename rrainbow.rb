@@ -6,8 +6,9 @@ require 'csv'
 require 'parallel'
 require 'ruby-progressbar'
 
-class RTGenerator
+class RubyRainbow
     attr_writer :base_charset, :uppercase_charset, :digits_charset, :special_charset
+
     def initialize(params)
         # Validate parameters
         required_params = %i[hash_algorithm salt min_length max_length number_of_threads include_uppercase include_digits include_special]
@@ -98,12 +99,13 @@ class RTGenerator
         raise "Ambiguity! You can't output the table and search for a hash at the same time." if output_path && hash_to_find
 
         combinations = generate_combinations
+        puts "Total combinations: #{combinations.to_a.size}"
         total_combinations = combinations.to_a.size
         mutex = Mutex.new
 
         # Progress bar
         progress_bar = ProgressBar.create(
-            title: "Computing Table",
+            title: output_path ? "Computing Table" : "Searching Hash",
             total: total_combinations,
             format: "\e[0;34m%t |%B| %p%% %e\e[0m",
             throttle_rate: 0.5,
@@ -170,6 +172,8 @@ class RTGenerator
     end
 
     def output_table(output_path)
+        puts "Outputting table to #{output_path}..."
+        
         File.open(output_path, 'w') do |file|
             case output_path.split('.').last
             when 'txt'
