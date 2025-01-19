@@ -44,6 +44,7 @@ class RTGenerator
 
     def benchmark(benchmark_time: 10)
         raise "Invalid benchmark time" unless benchmark_time.is_a?(Integer) && benchmark_time > 0
+
         charset = @base_charset
         charset += @uppercase_charset if @params[:include_uppercase]
         charset += @digits_charset if @params[:include_digits]
@@ -91,7 +92,10 @@ class RTGenerator
     
 
     def compute_table(output_path: nil, overwrite_file: false, hash_to_find: nil)
-        raise "Output file already exists. Use overwrite_file: true" if output_path && File.exist?(output_path) && !overwrite_file
+        raise "Output file already exists and no overwrite specified. Use 'overwrite_file: true' when calling this function to replace the specified file." if output_path && File.exist?(output_path) && !overwrite_file
+        raise "Invalid output path" if output_path && !output_path.is_a?(String)
+        raise "Invalid hash to find" if hash_to_find && !hash_to_find.is_a?(String)
+        raise "Ambiguity! You can't output the table and search for a hash at the same time." if output_path && hash_to_find
 
         combinations = generate_combinations
         total_combinations = combinations.to_a.size
@@ -111,7 +115,7 @@ class RTGenerator
         result = nil
 
         Parallel.each(combinations, in_threads: @params[:number_of_threads]) do |plain_text|
-            raise Parallel::Break if result
+            raise Parallel::Break if result && hash_to_find #Do not stop if computing the table
             hashed_value = hash(plain_text)
             result = [hashed_value, plain_text] if hash_to_find && hashed_value == hash_to_find
 
@@ -135,8 +139,10 @@ class RTGenerator
     private
 
     def generate_combinations
+        puts "Generating combinations..."
+        puts "This may take a while depending on the parameters."
+
         charset = @base_charset
-    
         charset += @uppercase_charset if @params[:include_uppercase] && !@uppercase_charset.empty?
         charset += @digits_charset if @params[:include_digits] && !@digits_charset.empty?
         charset += @special_charset if @params[:include_special] && !@special_charset.empty?
@@ -149,9 +155,6 @@ class RTGenerator
             end
         end
     end
-    
-    
-    
 
     def hash(pre_digest)
         salted = "#{@params[:salt]}#{pre_digest}"
