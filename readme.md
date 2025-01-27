@@ -14,6 +14,7 @@ RubyRainbow is a Ruby-based tool for generating and benchmarking rainbow tables 
 ---
 
 ## Table of Contents
+
 - [Installation](#installation)
 - [Usage](#usage)
   - [Initial Setup](#initial-setup)
@@ -30,11 +31,11 @@ RubyRainbow is a Ruby-based tool for generating and benchmarking rainbow tables 
 3. Install the required gems by running:
    ```bash
    gem install thread timeout digest json csv parallel ruby-progressbar
-    ```
+   ```
 4. Run the script with the following command to test the installation:
-    ```bash
-    ruby main.rb
-    ```
+   ```bash
+   ruby main.rb
+   ```
 
 ## Usage
 
@@ -61,16 +62,16 @@ rr = RubyRainbow.new(params)
 
 ### Parameters
 
-| Parameter          | Type    | Description                              | Example Value |
-|--------------------|---------|------------------------------------------|---------------|
-| hash_algorithm     | String  | Hash algorithm to use. Supported: MD5, SHA1, etc. | 'SHA256'      |
-| salt               | String  | Salt to prepend to hashes.               | 'mysalt'      |
-| min_length         | Integer | Minimum length of generated strings.     | 1             |
-| max_length         | Integer | Maximum length of generated strings.     | 3             |
-| include_uppercase  | Boolean | Include uppercase letters in charset.    | true          |
-| include_digits     | Boolean | Include digits in charset.               | true          |
-| include_special    | Boolean | Include special characters in charset.   | true          |
-| number_of_threads  | Integer | Number of threads for parallel processing. | 6             |
+| Parameter         | Type    | Description                                       | Example Value |
+| ----------------- | ------- | ------------------------------------------------- | ------------- |
+| hash_algorithm    | String  | Hash algorithm to use. Supported: MD5, SHA1, etc. | 'SHA256'      |
+| salt              | String  | Salt to prepend to hashes.                        | 'mysalt'      |
+| min_length        | Integer | Minimum length of generated strings.              | 1             |
+| max_length        | Integer | Maximum length of generated strings.              | 3             |
+| include_uppercase | Boolean | Include uppercase letters in charset.             | true          |
+| include_digits    | Boolean | Include digits in charset.                        | true          |
+| include_special   | Boolean | Include special characters in charset.            | true          |
+| number_of_threads | Integer | Number of threads for parallel processing.        | 6             |
 
 ### Benchmarking
 
@@ -81,6 +82,7 @@ rr.benchmark(benchmark_time: 10)
 ```
 
 **Output:**
+
 - Elapsed time
 - Total hashes computed
 - Hashes computed per second and per minute
@@ -92,7 +94,9 @@ Generate a rainbow table and save to a file:
 ```ruby
 rr.compute_table(output_path: 'table.csv', overwrite_file: true)
 ```
+
 Supported output formats:
+
 - `.txt`: Plain text with hash and plaintext pairs.
 - `.csv`: CSV file with hash and plaintext columns.
 - `.json`: JSON file with hash-to-plaintext mappings.
@@ -100,8 +104,7 @@ Supported output formats:
 Compute and find a specific hash in the generated table:
 
 ```ruby
-hash, value = rr.compute_table(hash_to_find: 'your_hash_here')
-puts "Hash found: #{hash}:#{value}"
+rr.compute_table(hash_to_find: 'your_hash_here') #=> This will return hash_here:plain_text
 ```
 
 ### Advanced Configuration
@@ -135,6 +138,6 @@ rr.benchmark(benchmark_time: 5)
 # Generate a rainbow table and save to a file
 rr.compute_table(output_path: 'rainbow_table.json', overwrite_file: true)
 
-# Find a specific hash 
-rr.compute_table(hash_to_find: 'your_hash_here') #=> This will return 'hash_here':'plain_text'
+# Find a specific hash
+rr.compute_table(hash_to_find: 'your_hash_here') #=> This will return hash_here:plain_text
 ```
