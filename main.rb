@@ -4,7 +4,7 @@ params = {
     hash_algorithm: 'SHA256',
     salt: '',
     min_length: 1,
-    max_length: 5,
+    max_length: 3,
     include_uppercase: true,
     include_digits: true,
     include_special: true,
