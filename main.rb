@@ -4,11 +4,11 @@ params = {
     hash_algorithm: 'SHA256',
     salt: '',
     min_length: 1,
-    max_length: 3,
+    max_length: 5,
     include_uppercase: true,
     include_digits: true,
     include_special: true,
-    number_of_threads: 6
+    number_of_threads: 4
 }
 
 rr = RubyRainbow.new(params)
@@ -20,7 +20,7 @@ rr = RubyRainbow.new(params)
 # rr.special_charset = ['@', '#', '$']
 
 # Benchmark the generation of hashes with current parameters
-rr.benchmark(benchmark_time: 10)
+rr.benchmark(benchmark_time: 5)
 
 # Compute all the hashes and output the results to a file (Text, CSV or JSON)
 rr.compute_table(output_path: 'table.txt', overwrite_file: true)

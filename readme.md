@@ -30,7 +30,7 @@ RubyRainbow is a Ruby-based tool for generating and benchmarking rainbow tables 
 2. Clone or download this repository.
 3. Install the required gems by running:
    ```bash
-   gem install thread timeout digest json csv parallel ruby-progressbar
+   gem install thread timeout digest json csv concurrent-ruby ruby-progressbar
    ```
 4. Run the script with the following command to test the installation:
    ```bash

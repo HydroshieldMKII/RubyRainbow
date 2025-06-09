@@ -3,7 +3,7 @@ require 'timeout'
 require 'digest'
 require 'json'
 require 'csv'
-require 'parallel'
+require 'concurrent-ruby'
 require 'ruby-progressbar'
 
 class RubyRainbow
@@ -41,18 +41,28 @@ class RubyRainbow
         @uppercase_charset = ('A'..'Z').to_a
         @digits_charset = ('0'..'9').to_a
         @special_charset = ['!', '@', '#', '$', '%', '^', '&', '*', '(', ')']
+        
+        # Pre-compute hash class
+        @hash_class = case @params[:hash_algorithm]
+                      when 'MD5' then Digest::MD5
+                      when 'SHA1' then Digest::SHA1
+                      when 'SHA256' then Digest::SHA256
+                      when 'SHA384' then Digest::SHA384
+                      when 'SHA512' then Digest::SHA512
+                      when 'RMD160' then Digest::RMD160
+                      end
+        
+        # Pre-allocate salt bytes
+        @salt_bytes = @params[:salt].b
+        @salt_size = @salt_bytes.bytesize
     end
 
     def benchmark(benchmark_time: 10)
         raise "Invalid benchmark time" unless benchmark_time.is_a?(Integer) && benchmark_time > 0
 
-        charset = @base_charset
-        charset += @uppercase_charset if @params[:include_uppercase]
-        charset += @digits_charset if @params[:include_digits]
-        charset += @special_charset if @params[:include_special]
-
-        total_combinations = charset.repeated_permutation(@params[:max_length]).size
-        hashes_generated = 0
+        charset = build_charset
+        total_combinations = calculate_total_combinations(charset)
+        hashes_generated = Concurrent::AtomicFixnum.new(0)
         start_time = Time.now
 
         # Progress bar
@@ -73,12 +83,29 @@ class RubyRainbow
             end
         end
 
-        begin   
+        begin
             Timeout.timeout(benchmark_time) do
-                charset.repeated_permutation(@params[:max_length]).each do |combination|
-                    hash(combination.join)
-                    hashes_generated += 1
+                pool = Concurrent::FixedThreadPool.new(@params[:number_of_threads])
+                thread_resources = Concurrent::Map.new
+                combinations = generate_combinations_fast(charset)
+                
+                combinations.each do |plain_text|
+                    pool.post do
+                        thread_id = Thread.current.object_id
+                        resources = thread_resources.compute_if_absent(thread_id) do
+                            {
+                                digest: @hash_class.new,
+                                buffer: String.new(capacity: 256)
+                            }
+                        end
+                        
+                        hash_fast(plain_text, resources[:digest], resources[:buffer])
+                        hashes_generated.increment
+                    end
                 end
+                
+                pool.shutdown
+                pool.wait_for_termination
             end
         rescue Timeout::Error
             t.kill
@@ -88,9 +115,8 @@ class RubyRainbow
 
         progress_bar.finish
         elapsed_time = Time.now - start_time
-        display_benchmark_results(elapsed_time, hashes_generated, total_combinations)
+        display_benchmark_results(elapsed_time, hashes_generated.value, total_combinations)
     end
-    
 
     def compute_table(output_path: nil, overwrite_file: false, hash_to_find: nil)
         raise "Output file already exists and no overwrite specified. Use 'overwrite_file: true' when calling this function to replace the specified file." if output_path && File.exist?(output_path) && !overwrite_file
@@ -98,10 +124,13 @@ class RubyRainbow
         raise "Invalid hash to find" if hash_to_find && !hash_to_find.is_a?(String)
         raise "Ambiguity! You can't output the table and search for a hash at the same time." if output_path && hash_to_find
 
-        combinations = generate_combinations
-        puts "Total combinations: #{combinations.to_a.size}"
-        total_combinations = combinations.to_a.size
-        mutex = Mutex.new
+        charset = build_charset
+        total_combinations = calculate_total_combinations(charset)
+        puts "Total combinations: #{total_combinations}"
+        
+        processed = Concurrent::AtomicFixnum.new(0)
+        last_update = Concurrent::AtomicReference.new(Time.now)
+        table_mutex = Mutex.new if output_path
 
         # Progress bar
         progress_bar = ProgressBar.create(
@@ -114,25 +143,87 @@ class RubyRainbow
             color: :blue
         )
 
-        result = nil
-
-        Parallel.each(combinations, in_threads: @params[:number_of_threads]) do |plain_text|
-            raise Parallel::Break if result && hash_to_find #Do not stop if computing the table
-            hashed_value = hash(plain_text)
-            result = [hashed_value, plain_text] if hash_to_find && hashed_value == hash_to_find
-
-            mutex.synchronize do
-                @table[hashed_value] = plain_text if output_path
-
-                # Update the progress bar
-                progress_bar.increment
+        result = Concurrent::AtomicReference.new(nil)
+        stop_flag = Concurrent::AtomicBoolean.new(false)
+        
+        # Create thread pool and thread-local resources
+        pool = Concurrent::FixedThreadPool.new(@params[:number_of_threads])
+        thread_resources = Concurrent::Map.new
+        
+        # Queue for batch processing
+        work_queue = Queue.new
+        batch_size = 1000
+        
+        # Producer thread
+        producer = Thread.new do
+            batch = []
+            generate_combinations_fast(charset).each do |plain_text|
+                batch << plain_text
+                if batch.size >= batch_size
+                    work_queue << batch
+                    batch = []
+                end
+                break if stop_flag.value
+            end
+            work_queue << batch unless batch.empty?
+            @params[:number_of_threads].times { work_queue << :done }
+        end
+        
+        # Worker futures
+        futures = @params[:number_of_threads].times.map do
+            Concurrent::Future.execute(executor: pool) do
+                thread_id = Thread.current.object_id
+                resources = thread_resources.compute_if_absent(thread_id) do
+                    {
+                        digest: @hash_class.new,
+                        buffer: String.new(capacity: 256)
+                    }
+                end
+                
+                loop do
+                    batch = work_queue.pop
+                    break if batch == :done || stop_flag.value
+                    
+                    batch.each do |plain_text|
+                        break if stop_flag.value
+                        
+                        hashed_value = hash_fast(plain_text, resources[:digest], resources[:buffer])
+                        
+                        if hash_to_find && hashed_value == hash_to_find
+                            result.set([hashed_value, plain_text])
+                            stop_flag.value = true
+                            break
+                        end
+                        
+                        if output_path
+                            table_mutex.synchronize { @table[hashed_value] = plain_text }
+                        end
+                    end
+                    
+                    # Update progress
+                    new_processed = processed.update { |v| v + batch.size }
+                    if new_processed % 5000 == 0
+                        current_time = Time.now
+                        last_time = last_update.get
+                        if current_time - last_time > 0.1
+                            progress_bar.progress = new_processed
+                            last_update.set(current_time)
+                        end
+                    end
+                end
             end
         end
-
+        
+        # Wait for completion
+        producer.join
+        futures.each(&:wait!)
+        pool.shutdown
+        pool.wait_for_termination
+        
         progress_bar.finish
 
         if hash_to_find
-            return result
+            return result.get
         elsif output_path
             output_table(output_path)
         end
@@ -140,35 +231,72 @@ class RubyRainbow
 
     private
 
-    def generate_combinations
+    def build_charset
+        charset = @base_charset.dup
+        charset.concat(@uppercase_charset) if @params[:include_uppercase] && !@uppercase_charset.empty?
+        charset.concat(@digits_charset) if @params[:include_digits] && !@digits_charset.empty?
+        charset.concat(@special_charset) if @params[:include_special] && !@special_charset.empty?
+        charset
+    end
+
+    def calculate_total_combinations(charset)
+        total = 0
+        charset_size = charset.size
+        (@params[:min_length]..@params[:max_length]).each do |length|
+            total += charset_size ** length
+        end
+        total
+    end
+
+    def generate_combinations_fast(charset)
         puts "Generating combinations..."
         puts "This may take a while depending on the parameters."
-
-        charset = @base_charset
-        charset += @uppercase_charset if @params[:include_uppercase] && !@uppercase_charset.empty?
-        charset += @digits_charset if @params[:include_digits] && !@digits_charset.empty?
-        charset += @special_charset if @params[:include_special] && !@special_charset.empty?
-    
+        
+        charset_size = charset.size
+        
         Enumerator.new do |yielder|
             (@params[:min_length]..@params[:max_length]).each do |length|
-                charset.repeated_permutation(length).each do |combination|
-                    yielder << combination.join
+                buffer = Array.new(length, 0)
+                string_buffer = String.new(capacity: length)
+                
+                loop do
+                    # Build string from indices
+                    string_buffer.clear
+                    buffer.each { |idx| string_buffer << charset[idx] }
+                    yielder << string_buffer.dup
+                    
+                    # Increment indices
+                    carry = 1
+                    (length - 1).downto(0) do |i|
+                        buffer[i] += carry
+                        if buffer[i] >= charset_size
+                            buffer[i] = 0
+                        else
+                            carry = 0
+                            break
+                        end
+                    end
+                    
+                    break if carry == 1
                 end
             end
         end
     end
 
-    def hash(pre_digest)
-        salted = "#{@params[:salt]}#{pre_digest}"
-        case @params[:hash_algorithm]
-        when 'MD5' then Digest::MD5.hexdigest(salted)
-        when 'SHA1' then Digest::SHA1.hexdigest(salted)
-        when 'SHA256' then Digest::SHA256.hexdigest(salted)
-        when 'SHA384' then Digest::SHA384.hexdigest(salted)
-        when 'SHA512' then Digest::SHA512.hexdigest(salted)
-        when 'RMD160' then Digest::RMD160.hexdigest(salted)
-        else raise "Unsupported hash algorithm: #{@params[:hash_algorithm]}"
+    def hash_fast(pre_digest, digest_obj, buffer = nil)
+        # Reuse buffer if provided, otherwise allocate new
+        if buffer
+            buffer.clear
+            buffer << @salt_bytes
+            buffer << pre_digest
+        else
+            buffer = @salt_bytes + pre_digest
         end
+        
+        # Reset and compute hash
+        digest_obj.reset
+        digest_obj.update(buffer)
+        digest_obj.hexdigest
     end
 
     def output_table(output_path)
